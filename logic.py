@@ -46,6 +46,12 @@ class QuestionGenerator:
                  title="Chapter 3: Melody Sequence",
                  description="Practice playing sequences of notes.",
                  knowledge_points=["simple_sequence"]
+            ),
+            "4": Chapter(
+                id="4",
+                title="Chapter 4: Theory Concepts",
+                description="Enharmonics, Semitones, and Whole Tones.",
+                knowledge_points=["enharmonic", "semitone", "wholetone"]
             )
         }
         
@@ -58,6 +64,23 @@ class QuestionGenerator:
             {"note": "G", "number": "5", "solfege": "Sol"},
             {"note": "A", "number": "6", "solfege": "La"},
             {"note": "B", "number": "7", "solfege": "Si"},
+        ]
+
+        # Chromatic scale for interval calculations (Index 0-11)
+        # Using a list of sets/lists to handle enharmonics at each position
+        self.chromatic_scale = [
+            ["C", "B#"],        # 0
+            ["C#", "Db"],       # 1
+            ["D"],              # 2
+            ["D#", "Eb"],       # 3
+            ["E", "Fb"],        # 4
+            ["F", "E#"],        # 5
+            ["F#", "Gb"],       # 6
+            ["G"],              # 7
+            ["G#", "Ab"],       # 8
+            ["A"],              # 9
+            ["A#", "Bb"],       # 10
+            ["B", "Cb"]         # 11
         ]
         
     def get_chapters(self) -> List[Dict[str, Any]]:
@@ -88,6 +111,10 @@ class QuestionGenerator:
         if chapter_id == "3":
             return self._generate_sequence_question()
 
+        # Logic for Chapter 4
+        if chapter_id == "4":
+            return self._generate_theory_question()
+
         point = random.choice(chapter.knowledge_points)
         
         if point == "treble_clef_notes":
@@ -98,6 +125,72 @@ class QuestionGenerator:
             return self._generate_piano_question("white")
         elif point == "black_keys":
             return self._generate_piano_question("black")
+            
+        return None
+
+    def _generate_theory_question(self) -> Dict[str, Any]:
+        q_type = random.choice(["enharmonic", "semitone", "wholetone"])
+        
+        if q_type == "enharmonic":
+            # Pick a note that actually has an enharmonic equivalent in our basic list
+            # indices 1, 3, 4, 5, 6, 8, 10, 11 (mostly blacks + B/C E/F boundaries)
+            # Let's simple pick from indices with > 1 element
+            candidates = [i for i, notes in enumerate(self.chromatic_scale) if len(notes) > 1]
+            idx = random.choice(candidates)
+            notes_at_idx = self.chromatic_scale[idx]
+            
+            source_note = random.choice(notes_at_idx)
+            # The answer is the other one(s). 
+            # Simplified: just picking one other as the target answer, or list of valid answers
+            valid_answers = [n for n in notes_at_idx if n != source_note]
+            
+            return {
+                "id": str(random.randint(10000, 99999)),
+                "type": "text_input",
+                "question_text": f"What is the <b>enharmonic equivalent</b> (等音) of <span class='highlight'>{source_note}</span>?",
+                "correct_answer": valid_answers, # List of valid strings
+                "extra_data": {}
+            }
+            
+        elif q_type == "semitone":
+            # Pick any note
+            start_idx = random.randint(0, 11)
+            direction = random.choice([1, -1]) # Up or Down
+            target_idx = (start_idx + direction) % 12
+            
+            start_note = random.choice(self.chromatic_scale[start_idx])
+            valid_answers = self.chromatic_scale[target_idx]
+            
+            dir_str = "up" if direction == 1 else "down"
+            dir_cn = "上" if direction == 1 else "下"
+            
+            return {
+                "id": str(random.randint(10000, 99999)),
+                "type": "text_input",
+                "question_text": f"What is a <b>semitone {dir_str}</b> (半音{dir_cn}行) from <span class='highlight'>{start_note}</span>?",
+                "correct_answer": valid_answers,
+                "extra_data": {}
+            }
+
+        elif q_type == "wholetone":
+             # Pick any note
+            start_idx = random.randint(0, 11)
+            direction = random.choice([2, -2]) # 2 semitones = whole tone
+            target_idx = (start_idx + direction) % 12
+            
+            start_note = random.choice(self.chromatic_scale[start_idx])
+            valid_answers = self.chromatic_scale[target_idx]
+            
+            dir_str = "up" if direction > 0 else "down"
+            dir_cn = "上" if direction > 0 else "下"
+            
+            return {
+                "id": str(random.randint(10000, 99999)),
+                "type": "text_input",
+                "question_text": f"What is a <b>whole tone {dir_str}</b> (全音{dir_cn}行) from <span class='highlight'>{start_note}</span>?",
+                "correct_answer": valid_answers,
+                "extra_data": {}
+            }
             
         return None
 

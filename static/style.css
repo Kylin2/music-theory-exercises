@@ -307,6 +307,26 @@ body {
     box-shadow: 0 0 15px var(--primary-accent);
 }
 
+.theory-input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 15px 25px;
+    font-size: 1.5rem;
+    color: var(--text-primary);
+    width: 100%;
+    max-width: 300px;
+    text-align: center;
+    transition: all 0.3s;
+    outline: none;
+}
+
+.theory-input:focus {
+    border-color: var(--primary-accent);
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.1);
+}
+
 /* Feedback Overlay */
 .feedback-overlay {
     position: absolute;

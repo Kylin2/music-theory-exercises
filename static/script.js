@@ -43,6 +43,8 @@ function renderQuestion(question, chapterId) {
         renderPianoQuestion(container, question, chapterId);
     } else if (question.type === 'piano_sequence') {
         renderPianoSequence(container, question, chapterId);
+    } else if (question.type === 'text_input') {
+        renderTextInput(container, question, chapterId);
     }
 
     // Feedback Overlay
@@ -59,6 +61,56 @@ let currentSequenceState = {
     target: [],
     currentIdx: 0
 };
+
+function renderTextInput(container, question, chapterId) {
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.gap = '20px';
+    wrapper.style.marginTop = '20px';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'theory-input';
+    input.placeholder = 'Type your answer...';
+    input.autocomplete = 'off';
+
+    const submitBtn = document.createElement('button');
+    submitBtn.textContent = 'Submit';
+    submitBtn.className = 'option-btn';
+    submitBtn.style.maxWidth = '200px';
+
+    const check = () => {
+        const val = input.value.trim();
+        // Case insensitive match
+        // correct_answer is a list of strings
+        if (!val) return;
+
+        const isCorrect = question.correct_answer.some(ans => ans.toLowerCase() === val.toLowerCase());
+
+        if (isCorrect) {
+            handleAnswer(submitBtn, true, chapterId);
+        } else {
+            handleAnswer(submitBtn, false, chapterId);
+            // Shake effect or just red
+            input.style.borderColor = '#ef4444';
+            setTimeout(() => input.style.borderColor = '', 1000);
+        }
+    };
+
+    submitBtn.onclick = check;
+    input.onkeypress = (e) => {
+        if (e.key === 'Enter') check();
+    };
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(submitBtn);
+    container.appendChild(wrapper);
+
+    // Auto focus
+    setTimeout(() => input.focus(), 100);
+}
 
 function renderMultipleChoice(container, question, chapterId) {
     // Placeholder visualization for note
