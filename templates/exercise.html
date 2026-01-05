@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Exercise - {{ chapter.title }}{% endblock %}
+
+{% block content %}
+<div class="exercise-container">
+    <header class="exercise-header">
+        <a href="/" class="nav-item">← Back to Chapters</a>
+        <h1 style="margin-top: 1rem;">{{ chapter.title }}</h1>
+        <p style="color: var(--text-secondary);">{{ chapter.description }}</p>
+    </header>
+
+    <div class="exercise-area" data-chapter-id="{{ chapter.id }}">
+        <!-- Question injected by JS -->
+    </div>
+</div>
+{% endblock %}

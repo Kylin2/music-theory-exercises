@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Music Theory - Chapters{% endblock %}
+
+{% block content %}
+<header class="hero-section">
+    <h1 class="hero-title">Master the Language of <span class="gradient-text">Music</span></h1>
+    <p class="hero-subtitle">Interactive exercises to refine your musical intuition.</p>
+</header>
+
+<div class="chapters-grid">
+    {% for chapter in chapters %}
+    <a href="{{ url_for('exercise', chapter_id=chapter.id) }}" class="chapter-card card-hover">
+        <div class="card-content">
+            <span class="chapter-number">0{{ chapter.id }}</span>
+            <h2>{{ chapter.title }}</h2>
+            <p>{{ chapter.description }}</p>
+            <div class="card-arrow">→</div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% endblock %}
