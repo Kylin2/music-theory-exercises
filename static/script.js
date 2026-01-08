@@ -45,6 +45,8 @@ function renderQuestion(question, chapterId) {
         renderPianoSequence(container, question, chapterId);
     } else if (question.type === 'text_input') {
         renderTextInput(container, question, chapterId);
+    } else if (question.type === 'metronome_tool') {
+        renderMetronomeTool(container, question, chapterId);
     }
 
     // Feedback Overlay
@@ -61,6 +63,235 @@ let currentSequenceState = {
     target: [],
     currentIdx: 0
 };
+
+// --- Metronome Logic ---
+class MetronomeEngine {
+    constructor() {
+        this.audioContext = null;
+        this.isPlaying = false;
+        this.tempo = 120;
+        this.currentBeatInBar = 0;
+        this.beatsPerBar = 4;
+        this.lookahead = 25.0; // ms
+        this.scheduleAheadTime = 0.1; // s
+        this.nextNoteTime = 0.0;
+        this.timerID = null;
+
+        // 0: weak, 1: strong, 2: mute
+        this.beatPattern = [1, 0, 0, 0];
+
+        this.notesInQueue = [];
+    }
+
+    init() {
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    nextNote() {
+        const secondsPerBeat = 60.0 / this.tempo;
+        this.nextNoteTime += secondsPerBeat;
+        this.currentBeatInBar++;
+        if (this.currentBeatInBar >= this.beatsPerBar) {
+            this.currentBeatInBar = 0;
+        }
+    }
+
+    scheduleNote(beatNumber, time) {
+        this.notesInQueue.push({ note: beatNumber, time: time });
+
+        // Visual sync callback
+        // We use a safe approach via drawing function or checking time in loop, 
+        // but for simplicity in this structure we'll trigger events or let the UI loop poll queue.
+
+        // Audio
+        let strength = this.beatPattern[beatNumber % this.beatPattern.length];
+        if (strength === 2) return; // Mute
+
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        osc.connect(gain);
+        gain.connect(this.audioContext.destination);
+
+        if (strength === 1) {
+            // Strong beat (High pitch)
+            osc.frequency.value = 1000;
+            gain.gain.value = 1;
+        } else {
+            // Weak beat (Low pitch)
+            osc.frequency.value = 800;
+            gain.gain.value = 0.6;
+        }
+
+        osc.start(time);
+        osc.stop(time + 0.05);
+    }
+
+    scheduler() {
+        while (this.nextNoteTime < this.audioContext.currentTime + this.scheduleAheadTime) {
+            this.scheduleNote(this.currentBeatInBar, this.nextNoteTime);
+            this.nextNote();
+        }
+        this.timerID = setTimeout(() => this.scheduler(), this.lookahead);
+    }
+
+    start() {
+        if (this.isPlaying) return;
+        this.init();
+        if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume();
+        }
+
+        this.currentBeatInBar = 0;
+        this.nextNoteTime = this.audioContext.currentTime + 0.05;
+        this.isPlaying = true;
+        this.scheduler();
+    }
+
+    stop() {
+        this.isPlaying = false;
+        clearTimeout(this.timerID);
+    }
+
+    setTempo(bpm) {
+        this.tempo = bpm;
+    }
+
+    setBeats(n) {
+        this.beatsPerBar = n;
+        // Adjust pattern length
+        if (this.beatPattern.length < n) {
+            while (this.beatPattern.length < n) this.beatPattern.push(0);
+        } else {
+            this.beatPattern = this.beatPattern.slice(0, n);
+        }
+    }
+
+    toggleAccent(idx) {
+        // Cycle: 0(Weak) -> 1(Strong) -> 2(Mute) -> 0
+        this.beatPattern[idx] = (this.beatPattern[idx] + 1) % 3;
+        return this.beatPattern[idx];
+    }
+}
+
+// Global Metronome Instance
+let metronome = new MetronomeEngine();
+
+function renderMetronomeTool(container, question, chapterId) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'metronome-wrapper';
+
+    // BPM Display & Control
+    const bpmContainer = document.createElement('div');
+    bpmContainer.className = 'bpm-container';
+
+    const bpmDisplay = document.createElement('div');
+    bpmDisplay.textContent = metronome.tempo;
+    bpmDisplay.className = 'bpm-display';
+
+    const bpmLabel = document.createElement('div');
+    bpmLabel.textContent = 'BPM';
+    bpmLabel.style.color = 'var(--text-secondary)';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '30';
+    slider.max = '300';
+    slider.value = metronome.tempo;
+    slider.className = 'bpm-slider';
+    slider.oninput = (e) => {
+        const val = parseInt(e.target.value);
+        metronome.setTempo(val);
+        bpmDisplay.textContent = val;
+    };
+
+    bpmContainer.append(bpmDisplay, bpmLabel, slider);
+
+    // Visual Beats
+    const beatsContainer = document.createElement('div');
+    beatsContainer.className = 'beats-container';
+
+    function renderBeats() {
+        beatsContainer.innerHTML = '';
+        metronome.beatPattern.forEach((strength, idx) => {
+            const beat = document.createElement('div');
+            beat.className = `beat-indicator strength-${strength}`;
+            beat.id = `beat-${idx}`;
+
+            // Interaction: click to toggle accent
+            beat.onclick = () => {
+                metronome.toggleAccent(idx);
+                renderBeats(); // Re-render to show new state
+            };
+
+            beatsContainer.appendChild(beat);
+        });
+    }
+    renderBeats();
+
+    // Time Sig Controls
+    const tsContainer = document.createElement('div');
+    tsContainer.className = 'ts-container';
+    [2, 3, 4, 6].forEach(num => {
+        const btn = document.createElement('button');
+        btn.textContent = `${num}/4`;
+        if (num === 6) btn.textContent = '6/8';
+        btn.className = 'ts-btn';
+        if (metronome.beatsPerBar === num) btn.classList.add('active');
+
+        btn.onclick = () => {
+            document.querySelectorAll('.ts-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            metronome.setBeats(num);
+            renderBeats();
+        };
+
+        tsContainer.appendChild(btn);
+    });
+
+    // Play/Stop
+    const playBtn = document.createElement('button');
+    playBtn.textContent = metronome.isPlaying ? 'STOP' : 'START';
+    playBtn.className = 'play-btn';
+    playBtn.onclick = () => {
+        if (metronome.isPlaying) {
+            metronome.stop();
+            playBtn.textContent = 'START';
+            playBtn.classList.remove('active');
+        } else {
+            metronome.start();
+            playBtn.textContent = 'STOP';
+            playBtn.classList.add('active');
+            requestAnimationFrame(uiLoop);
+        }
+    };
+
+    wrapper.append(bpmContainer, beatsContainer, tsContainer, playBtn);
+    container.appendChild(wrapper);
+
+    // UI Animation Loop for visual beat flash
+    function uiLoop() {
+        if (!metronome.isPlaying) return;
+
+        const currentTime = metronome.audioContext.currentTime;
+
+        while (metronome.notesInQueue.length && metronome.notesInQueue[0].time < currentTime) {
+            const currentNote = metronome.notesInQueue[0];
+            metronome.notesInQueue.splice(0, 1);
+
+            // Trigger visual flash
+            const beatEl = document.getElementById(`beat-${currentNote.note}`);
+            if (beatEl) {
+                beatEl.classList.add('flash');
+                setTimeout(() => beatEl.classList.remove('flash'), 100);
+            }
+        }
+
+        requestAnimationFrame(uiLoop);
+    }
+}
 
 function renderTextInput(container, question, chapterId) {
     const wrapper = document.createElement('div');

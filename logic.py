@@ -52,6 +52,12 @@ class QuestionGenerator:
                 title="Chapter 4: Theory Concepts",
                 description="Enharmonics, Semitones, and Whole Tones.",
                 knowledge_points=["enharmonic", "semitone", "wholetone"]
+            ),
+            "5": Chapter(
+                id="5",
+                title="Chapter 5: Pro Metronome",
+                description="Professional practice tool with adjustable BPM and accents.",
+                knowledge_points=["metronome_tool"]
             )
         }
         
@@ -114,6 +120,15 @@ class QuestionGenerator:
         # Logic for Chapter 4
         if chapter_id == "4":
             return self._generate_theory_question()
+            
+        # Logic for Chapter 5 (Tool)
+        if chapter_id == "5":
+            return {
+                "id": "metronome",
+                "type": "metronome_tool",
+                "question_text": "Professional Metronome",
+                "extra_data": {}
+            }
 
         point = random.choice(chapter.knowledge_points)
         
