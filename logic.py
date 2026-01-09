@@ -58,6 +58,12 @@ class QuestionGenerator:
                 title="Chapter 5: Pro Metronome",
                 description="Professional practice tool with adjustable BPM and accents.",
                 knowledge_points=["metronome_tool"]
+            ),
+            "6": Chapter(
+                id="6",
+                title="Chapter 6: Rhythm Training",
+                description="Listen to the audio and write down the rhythm (X, 0, -).",
+                knowledge_points=["rhythm_ear_training"]
             )
         }
         
@@ -127,6 +133,15 @@ class QuestionGenerator:
                 "id": "metronome",
                 "type": "metronome_tool",
                 "question_text": "Professional Metronome",
+                "extra_data": {}
+            }
+        
+        # Logic for Chapter 6
+        if chapter_id == "6":
+            return {
+                "id": "rhythm_trainer",
+                "type": "rhythm_tool",
+                "question_text": "Rhythm Ear Training",
                 "extra_data": {}
             }
 

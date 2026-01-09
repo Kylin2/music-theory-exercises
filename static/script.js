@@ -47,6 +47,8 @@ function renderQuestion(question, chapterId) {
         renderTextInput(container, question, chapterId);
     } else if (question.type === 'metronome_tool') {
         renderMetronomeTool(container, question, chapterId);
+    } else if (question.type === 'rhythm_tool') {
+        renderRhythmTool(container, question, chapterId);
     }
 
     // Feedback Overlay
@@ -63,6 +65,299 @@ let currentSequenceState = {
     target: [],
     currentIdx: 0
 };
+
+// --- Rhythm Logic ---
+class RhythmTool {
+    constructor() {
+        this.audioContext = null;
+        this.isPlaying = false;
+        this.pattern = [];
+        this.bpm = 90; // Default
+        this.bars = 2; // Default
+        this.beatsPerBar = 4; // Default
+        this.useMetronome = false;
+    }
+
+    init() {
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    generatePattern() {
+        const totalBeats = this.bars * this.beatsPerBar;
+        this.pattern = [];
+
+        for (let i = 0; i < totalBeats; i++) {
+            if (i === 0) {
+                this.pattern.push('X'); // Always start with a note for clarity
+            } else {
+                const prev = this.pattern[this.pattern.length - 1];
+                let choices = ['X', '0'];
+                if (prev === 'X' || prev === '-') choices.push('-');
+
+                // Weighting to make it musical
+                // Reduce chance of 0 after 0
+                if (prev === '0') choices = ['X', 'X', '0'];
+
+                this.pattern.push(choices[Math.floor(Math.random() * choices.length)]);
+            }
+        }
+        return this.pattern.join(' ');
+    }
+
+    play(onComplete) {
+        if (this.isPlaying) return;
+        this.init();
+        if (this.audioContext.state === 'suspended') this.audioContext.resume();
+
+        this.isPlaying = true;
+        const beatDuration = 60.0 / this.bpm;
+        const startTime = this.audioContext.currentTime + 0.1;
+
+        // Schedule beats
+        for (let i = 0; i < this.pattern.length; i++) {
+            const time = startTime + (i * beatDuration);
+            const type = this.pattern[i];
+
+            // Metronome Click?
+            if (this.useMetronome) {
+                this.playClick(time, i % this.beatsPerBar === 0);
+            }
+
+            // Rhythm Note
+            if (type === 'X') {
+                // Calculate duration based on following '-'
+                let dur = beatDuration;
+                let j = i + 1;
+                while (j < this.pattern.length && this.pattern[j] === '-') {
+                    dur += beatDuration;
+                    j++;
+                }
+                this.playDaVoice(time, dur * 0.95);
+            }
+        }
+
+        setTimeout(() => {
+            this.isPlaying = false;
+            if (onComplete) onComplete();
+        }, (this.pattern.length * beatDuration * 1000) + 500);
+    }
+
+    playClick(time, isStrong) {
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        osc.connect(gain);
+        gain.connect(this.audioContext.destination);
+
+        osc.frequency.value = isStrong ? 1200 : 800;
+        osc.type = 'square';
+
+        gain.gain.setValueAtTime(isStrong ? 0.3 : 0.1, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+
+        osc.start(time);
+        osc.stop(time + 0.05);
+    }
+
+    playDaVoice(time, duration) {
+        // Synthesize "Da" sound using filtered sawtooth/triangle
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        const filter = this.audioContext.createBiquadFilter();
+
+        osc.frequency.value = 261.6; // C4
+        osc.type = 'sawtooth';
+
+        filter.type = 'lowpass';
+        filter.Q.value = 5;
+
+        // Connect
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.audioContext.destination);
+
+        // Filter Envelope (Vowel-like formant movement)
+        // Closed -> Open -> Closed
+        filter.frequency.setValueAtTime(200, time);
+        filter.frequency.linearRampToValueAtTime(800, time + 0.1);
+        filter.frequency.linearRampToValueAtTime(400, time + 0.2);
+
+        // Amp Envelope
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.8, time + 0.05); // Attack
+        gain.gain.exponentialRampToValueAtTime(0.3, time + 0.2); // Decay
+        gain.gain.linearRampToValueAtTime(0, time + duration); // Release
+
+        osc.start(time);
+        osc.stop(time + duration);
+    }
+}
+
+let rhythmTool = new RhythmTool();
+
+function renderRhythmTool(container, question, chapterId) {
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.gap = '25px';
+    wrapper.style.width = '100%';
+
+    // --- Settings Panel ---
+    const settingsPanel = document.createElement('div');
+    settingsPanel.style.display = 'flex';
+    settingsPanel.style.gap = '20px';
+    settingsPanel.style.flexWrap = 'wrap';
+    settingsPanel.style.justifyContent = 'center';
+    settingsPanel.style.background = 'rgba(0,0,0,0.2)';
+    settingsPanel.style.padding = '15px';
+    settingsPanel.style.borderRadius = '15px';
+
+    // BPM
+    const bpmWrap = createSettingInput('BPM', '90', (v) => rhythmTool.bpm = parseInt(v));
+    // Bars
+    const barsWrap = createSettingInput('Bars', '2', (v) => rhythmTool.bars = parseInt(v));
+    // Time Sig
+    const tsWrap = document.createElement('div');
+    tsWrap.className = 'setting-item';
+    tsWrap.innerHTML = '<label>Time Sig</label>';
+    const tsSelect = document.createElement('select');
+    tsSelect.innerHTML = '<option value="4">4/4</option><option value="3">3/4</option>';
+    tsSelect.style.padding = '5px';
+    tsSelect.style.background = '#334155';
+    tsSelect.style.color = '#fff';
+    tsSelect.style.border = 'none';
+    tsSelect.style.borderRadius = '5px';
+    tsSelect.onchange = (e) => rhythmTool.beatsPerBar = parseInt(e.target.value);
+    tsWrap.appendChild(tsSelect);
+
+    settingsPanel.append(bpmWrap, barsWrap, tsWrap);
+
+    // --- Controls ---
+    const controlsRow = document.createElement('div');
+    controlsRow.style.display = 'flex';
+    controlsRow.style.gap = '15px';
+
+    // Generate Btn
+    const generateBtn = document.createElement('button');
+    generateBtn.textContent = '🎲 Generate';
+    generateBtn.className = 'option-btn';
+
+    // Play Btn
+    const playBtn = document.createElement('button');
+    playBtn.textContent = '▶ Play';
+    playBtn.className = 'play-btn';
+    playBtn.style.fontSize = '1.2rem';
+    playBtn.style.padding = '12px 30px';
+    playBtn.style.marginTop = '0';
+    playBtn.disabled = true;
+
+    // Metronome Toggle
+    const metroToggle = document.createElement('label');
+    metroToggle.style.display = 'flex';
+    metroToggle.style.alignItems = 'center';
+    metroToggle.style.gap = '10px';
+    metroToggle.style.cursor = 'pointer';
+    metroToggle.innerHTML = '<input type="checkbox" id="metro-check"> <span>Metronome</span>';
+    metroToggle.querySelector('input').onchange = (e) => rhythmTool.useMetronome = e.target.checked;
+
+    controlsRow.append(generateBtn, playBtn);
+
+    // --- Interaction Area ---
+    const input = document.createElement('input');
+    input.className = 'theory-input';
+    input.placeholder = 'Generate first...';
+    input.style.letterSpacing = '3px';
+
+    const feedbackText = document.createElement('div');
+    feedbackText.style.height = '20px';
+    feedbackText.style.color = 'var(--text-secondary)';
+
+    const showInfo = document.createElement('div');
+    showInfo.className = 'answer-box';
+    showInfo.style.display = 'none';
+    showInfo.style.marginTop = '10px';
+    showInfo.style.padding = '10px';
+    showInfo.style.background = 'rgba(16, 185, 129, 0.1)';
+    showInfo.style.color = '#10b981';
+    showInfo.style.borderRadius = '8px';
+
+    // --- Logic Wiring ---
+    let currentAnswer = "";
+
+    generateBtn.onclick = () => {
+        currentAnswer = rhythmTool.generatePattern();
+        playBtn.disabled = false;
+        input.value = '';
+        input.placeholder = 'Type rhythm (X 0 -)...';
+        input.focus();
+        showInfo.style.display = 'none';
+        feedbackText.textContent = "New rhythm generated!";
+        setTimeout(() => feedbackText.textContent = "", 2000);
+
+        // Auto play? Maybe not, allow user to press play
+    };
+
+    playBtn.onclick = () => {
+        if (rhythmTool.isPlaying) return;
+        playBtn.classList.add('active');
+        rhythmTool.play(() => playBtn.classList.remove('active'));
+    };
+
+    // Check Logic
+    const submitBtn = document.createElement('button');
+    submitBtn.textContent = 'Check';
+    submitBtn.className = 'option-btn';
+
+    const check = () => {
+        if (!currentAnswer) return;
+        let val = input.value.trim().toUpperCase().replace(/\s+/g, ' ');
+        if (val === currentAnswer) {
+            feedbackText.textContent = "Correct!";
+            feedbackText.style.color = '#10b981';
+            input.style.borderColor = '#10b981';
+        } else {
+            feedbackText.textContent = "Try again.";
+            feedbackText.style.color = '#ef4444';
+            input.style.borderColor = '#ef4444';
+        }
+    };
+
+    submitBtn.onclick = check;
+    input.onkeypress = (e) => { if (e.key === 'Enter') check(); };
+
+    const showAnsBtn = document.createElement('button');
+    showAnsBtn.textContent = '👁 Show Answer';
+    showAnsBtn.className = 'ts-btn'; // Small style
+    showAnsBtn.onclick = () => {
+        if (!currentAnswer) return;
+        showInfo.textContent = currentAnswer;
+        showInfo.style.display = 'block';
+    };
+
+    // Assemble
+    wrapper.append(settingsPanel, metroToggle, controlsRow, input, submitBtn, feedbackText, showAnsBtn, showInfo);
+    container.appendChild(wrapper);
+}
+
+function createSettingInput(label, def, onChange) {
+    const div = document.createElement('div');
+    div.className = 'setting-item';
+    div.innerHTML = `<label>${label}</label>`;
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.value = def;
+    inp.style.width = '60px';
+    inp.style.padding = '5px';
+    inp.style.borderRadius = '5px';
+    inp.style.border = 'none';
+    inp.style.background = '#334155';
+    inp.style.color = '#fff';
+    inp.onchange = (e) => onChange(e.target.value);
+    div.appendChild(inp);
+    return div;
+}
 
 // --- Metronome Logic ---
 class MetronomeEngine {
