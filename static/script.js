@@ -67,15 +67,86 @@ let currentSequenceState = {
 };
 
 // --- Rhythm Logic ---
+const RHYTHM_PATTERNS = {
+    // Binary Grid (Base 4 subdivisions per beat)
+    binary: {
+        basic: [
+            { name: "Quarter", pattern: "X---" }, // 1 beat
+            { name: "Rest", pattern: "0000" }     // 1 beat
+        ],
+        long: [
+            { name: "Whole", pattern: "X---------------" }, // 4 beats
+            { name: "Half", pattern: "X-------" }, // 2 beats
+            { name: "Half Rest", pattern: "00000000" }
+        ],
+        eighth: [
+            { name: "Eighths", pattern: "X-X-" }, // 2 notes
+            { name: "Eighth Rest", pattern: "0-0-" }, // 
+            { name: "Run", pattern: "X-0-" }
+        ],
+        sixteenth: [
+            { name: "16ths", pattern: "XXXX" },
+            { name: "Gallop", pattern: "X-XX" }, // 8th + 2 16ths
+            { name: "RevGallop", pattern: "XXX-" }, // 2 16ths + 8th
+            { name: "Eighth 2-16", pattern: "X-XX" },
+            { name: "16-Eighth-16", pattern: "XX-X" } // Syncopation check? No this is just 16 variations
+        ],
+        dotted: [
+            { name: "Dotted Quarter", pattern: "X-----X-" }, // 2 beats usually paired with 8th? or 1.5 beat
+            { name: "Dot8-16", pattern: "X--X" }, // Dotted 8th + 16th (3+1)
+            { name: "16-Dot8", pattern: "XX--" }  // 16th + Dotted 8th (1+3)
+        ],
+        syncopation: [
+            { name: "XiaoQieFen", pattern: "XX-X" }, // 16th(1) + 8th(2) + 16th(1)
+            { name: "Offbeat", pattern: "0-X-" },
+            { name: "DaQieFen", pattern: "X-X---X-" } // 8th + Quarter + 8th (2 beats: 2+4+2)
+        ]
+    },
+    // Ternary Grid (Base 3 subdivisions per beat)
+    ternary: {
+        basic: [
+            { name: "Quarter", pattern: "X--" },
+            { name: "Rest", pattern: "000" }
+        ],
+        long: [
+            { name: "Dotted Half", pattern: "X--------" } // 3 beats? Or just Half/Whole?
+            // In ternary (e.g. 12/8 feel or triplets in 4/4)
+            // Let's assume Triplets in 4/4.
+            // Half note = 2 beats = 6 ticks.
+            // Whole note = 4 beats = 12 ticks.
+            , { name: "Half", pattern: "X-----" }
+            , { name: "Whole", pattern: "X-----------" }
+        ],
+        triplet: [
+            { name: "Triplets", pattern: "XXX" },
+            { name: "Swing", pattern: "X-X" }, // Shuffle feel (Quarter + 8th triplet)
+            { name: "Rest Trip", pattern: "0X0" }
+        ]
+    }
+};
+
 class RhythmTool {
     constructor() {
         this.audioContext = null;
         this.isPlaying = false;
         this.pattern = [];
-        this.bpm = 90; // Default
-        this.bars = 2; // Default
-        this.beatsPerBar = 4; // Default
-        this.useMetronome = false;
+        this.bpm = 80;
+        this.bars = 2;
+        this.beatsPerBar = 4;
+        this.useMetronome = true;
+
+        // Features State
+        this.features = {
+            quarter: true,
+            long: false, // New feature
+            eighth: false,
+            sixteenth: false,
+            dotted: false,
+            syncopation: false,
+            triplets: false // Exclusive mode
+        };
+
+        this.ticksPerBeat = 4; // 4 for binary, 3 for ternary
     }
 
     init() {
@@ -85,25 +156,95 @@ class RhythmTool {
     }
 
     generatePattern() {
-        const totalBeats = this.bars * this.beatsPerBar;
         this.pattern = [];
+        const f = this.features;
+        const isTernary = f.triplets;
+        let baseTicks = isTernary ? 3 : 4;
 
-        for (let i = 0; i < totalBeats; i++) {
-            if (i === 0) {
-                this.pattern.push('X'); // Always start with a note for clarity
+        // Determine optimal resolution (ticksPerBeat)
+        // 1: Quarter only
+        // 2: 8th (Binary)
+        // 4: 16th/Sync/Dot (Binary)
+        // 3: Triplet (Ternary)
+
+        if (isTernary) {
+            this.ticksPerBeat = 3;
+        } else {
+            if (f.sixteenth || f.dotted || f.syncopation) {
+                this.ticksPerBeat = 4;
+            } else if (f.eighth) {
+                this.ticksPerBeat = 2;
             } else {
-                const prev = this.pattern[this.pattern.length - 1];
-                let choices = ['X', '0'];
-                if (prev === 'X' || prev === '-') choices.push('-');
-
-                // Weighting to make it musical
-                // Reduce chance of 0 after 0
-                if (prev === '0') choices = ['X', 'X', '0'];
-
-                this.pattern.push(choices[Math.floor(Math.random() * choices.length)]);
+                this.ticksPerBeat = 1;
             }
         }
-        return this.pattern.join(' ');
+
+        const totalBeats = this.bars * this.beatsPerBar;
+        let filledBeats = 0;
+
+        const pool = [];
+        const rules = isTernary ? RHYTHM_PATTERNS.ternary : RHYTHM_PATTERNS.binary;
+
+        // Build Pool (Select patterns usually defined in Base Resolution)
+        // We only pick patterns compatible with current resolution?
+        // Actually, our UI toggles enforce this hierarchy naturally.
+
+        if (f.quarter || (!isTernary && Object.values(f).every(v => !v))) {
+            pool.push(...rules.basic.map(p => ({ ...p, weight: 10, beats: 1 })));
+        }
+
+        if (f.long && rules.long) {
+            // Long notes available in all modes (except maybe 1-beat bars?)
+            pool.push(...rules.long.map(p => ({ ...p, weight: 4, beats: p.pattern.length / baseTicks })));
+        }
+
+        if (!isTernary) {
+            if (f.eighth) pool.push(...rules.eighth.map(p => ({ ...p, weight: 8, beats: 1 })));
+
+            if (f.sixteenth) pool.push(...rules.sixteenth.map(p => ({ ...p, weight: 6, beats: 1 })));
+            if (f.dotted) pool.push(...rules.dotted.map(p => ({ ...p, weight: 5, beats: 1 })));
+            if (f.syncopation) {
+                pool.push(...rules.syncopation.filter(p => p.pattern.length === 4).map(p => ({ ...p, weight: 5, beats: 1 })));
+                pool.push(...rules.syncopation.filter(p => p.pattern.length === 8).map(p => ({ ...p, weight: 5, beats: 2 })));
+            }
+        } else {
+            pool.push(...rules.triplet.map(p => ({ ...p, weight: 8, beats: 1 })));
+        }
+
+        if (pool.length === 0) pool.push({ pattern: isTernary ? "X--" : "X---", beats: 1 });
+
+        while (filledBeats < totalBeats) {
+            const remaining = totalBeats - filledBeats;
+            const valid = pool.filter(p => p.beats <= remaining);
+            if (valid.length === 0) break;
+
+            const choice = valid[Math.floor(Math.random() * valid.length)];
+
+            // Downsample Pattern if needed
+            // Pattern is in `baseTicks` (4 or 3)
+            // Target is `this.ticksPerBeat`
+            // Scale factor = base / target
+            const scale = baseTicks / this.ticksPerBeat;
+
+            // Convert "X---" (Base 4) -> "X" (Target 1) if scale is 4
+            // Convert "X-X-" (Base 4) -> "XX" (Target 2) if scale is 2
+
+            let adaptedPattern = "";
+            for (let i = 0; i < choice.pattern.length; i += scale) {
+                adaptedPattern += choice.pattern[i];
+            }
+
+            const chars = adaptedPattern.split('');
+            this.pattern.push(...chars);
+            filledBeats += choice.beats;
+        }
+
+        // Return string with spaces every Beat
+        const chunks = [];
+        for (let i = 0; i < this.pattern.length; i += this.ticksPerBeat) {
+            chunks.push(this.pattern.slice(i, i + this.ticksPerBeat).join(''));
+        }
+        return chunks.join(' ');
     }
 
     play(onComplete) {
@@ -112,36 +253,40 @@ class RhythmTool {
         if (this.audioContext.state === 'suspended') this.audioContext.resume();
 
         this.isPlaying = true;
-        const beatDuration = 60.0 / this.bpm;
+        const tickDuration = (60.0 / this.bpm) / this.ticksPerBeat;
         const startTime = this.audioContext.currentTime + 0.1;
 
-        // Schedule beats
-        for (let i = 0; i < this.pattern.length; i++) {
-            const time = startTime + (i * beatDuration);
-            const type = this.pattern[i];
+        // Schedule
+        this.pattern.forEach((symbol, i) => {
+            const time = startTime + (i * tickDuration);
 
-            // Metronome Click?
-            if (this.useMetronome) {
-                this.playClick(time, i % this.beatsPerBar === 0);
+            // Metronome: Click on beat start
+            if (this.useMetronome && i % this.ticksPerBeat === 0) {
+                // Beat accent
+                const beatNum = (i / this.ticksPerBeat) % this.beatsPerBar;
+                this.playClick(time, beatNum === 0);
             }
 
-            // Rhythm Note
-            if (type === 'X') {
-                // Calculate duration based on following '-'
-                let dur = beatDuration;
+            if (symbol === 'X') {
+                // Find duration
+                let durTicks = 1;
                 let j = i + 1;
-                while (j < this.pattern.length && this.pattern[j] === '-') {
-                    dur += beatDuration;
+                while (j < this.pattern.length && (this.pattern[j] === '-' || this.pattern[j] === '0')) {
+                    // Treat 0 as silence, but '-' as sustain. 
+                    // Our pattern generator uses 0 for rests.
+                    // If pattern is X-0-, X gets 2 ticks. 0 gets 2 ticks silence.
+                    if (this.pattern[j] === '-') durTicks++;
+                    else break;
                     j++;
                 }
-                this.playDaVoice(time, dur * 0.95);
+                this.playDaVoice(time, durTicks * tickDuration * 0.95);
             }
-        }
+        });
 
         setTimeout(() => {
             this.isPlaying = false;
             if (onComplete) onComplete();
-        }, (this.pattern.length * beatDuration * 1000) + 500);
+        }, (this.pattern.length * tickDuration * 1000) + 500);
     }
 
     playClick(time, isStrong) {
@@ -149,45 +294,39 @@ class RhythmTool {
         const gain = this.audioContext.createGain();
         osc.connect(gain);
         gain.connect(this.audioContext.destination);
-
         osc.frequency.value = isStrong ? 1200 : 800;
         osc.type = 'square';
 
-        gain.gain.setValueAtTime(isStrong ? 0.3 : 0.1, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+        // Louder Click
+        // Strong: 0.8, Weak: 0.4
+        const vol = isStrong ? 0.8 : 0.4;
 
+        gain.gain.setValueAtTime(vol, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
         osc.start(time);
         osc.stop(time + 0.05);
     }
 
     playDaVoice(time, duration) {
-        // Synthesize "Da" sound using filtered sawtooth/triangle
         const osc = this.audioContext.createOscillator();
         const gain = this.audioContext.createGain();
         const filter = this.audioContext.createBiquadFilter();
-
-        osc.frequency.value = 261.6; // C4
+        osc.frequency.value = 261.6;
         osc.type = 'sawtooth';
-
         filter.type = 'lowpass';
         filter.Q.value = 5;
-
-        // Connect
         osc.connect(filter);
         filter.connect(gain);
         gain.connect(this.audioContext.destination);
 
-        // Filter Envelope (Vowel-like formant movement)
-        // Closed -> Open -> Closed
         filter.frequency.setValueAtTime(200, time);
-        filter.frequency.linearRampToValueAtTime(800, time + 0.1);
-        filter.frequency.linearRampToValueAtTime(400, time + 0.2);
+        filter.frequency.linearRampToValueAtTime(800, time + 0.05);
+        filter.frequency.linearRampToValueAtTime(400, time + 0.15);
 
-        // Amp Envelope
         gain.gain.setValueAtTime(0, time);
-        gain.gain.linearRampToValueAtTime(0.8, time + 0.05); // Attack
-        gain.gain.exponentialRampToValueAtTime(0.3, time + 0.2); // Decay
-        gain.gain.linearRampToValueAtTime(0, time + duration); // Release
+        gain.gain.linearRampToValueAtTime(0.8, time + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.5, time + 0.1);
+        gain.gain.linearRampToValueAtTime(0, time + duration); // Sustain then kill
 
         osc.start(time);
         osc.stop(time + duration);
@@ -198,105 +337,143 @@ let rhythmTool = new RhythmTool();
 
 function renderRhythmTool(container, question, chapterId) {
     const wrapper = document.createElement('div');
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.alignItems = 'center';
-    wrapper.style.gap = '25px';
-    wrapper.style.width = '100%';
+    wrapper.style.cssText = 'display:flex; flex-direction:column; align-items:center; gap:20px; width:100%;';
 
-    // --- Settings Panel ---
-    const settingsPanel = document.createElement('div');
-    settingsPanel.style.display = 'flex';
-    settingsPanel.style.gap = '20px';
-    settingsPanel.style.flexWrap = 'wrap';
-    settingsPanel.style.justifyContent = 'center';
-    settingsPanel.style.background = 'rgba(0,0,0,0.2)';
-    settingsPanel.style.padding = '15px';
-    settingsPanel.style.borderRadius = '15px';
+    // --- Config Section ---
+    const configCard = document.createElement('div');
+    configCard.className = 'glass-panel'; // reusing typical class
+    configCard.style.cssText = 'padding:15px; width:100%; max-width:500px; display:flex; flex-direction:column; gap:15px;';
 
-    // BPM
-    const bpmWrap = createSettingInput('BPM', '90', (v) => rhythmTool.bpm = parseInt(v));
-    // Bars
-    const barsWrap = createSettingInput('Bars', '2', (v) => rhythmTool.bars = parseInt(v));
-    // Time Sig
-    const tsWrap = document.createElement('div');
-    tsWrap.className = 'setting-item';
-    tsWrap.innerHTML = '<label>Time Sig</label>';
+    // 1. Basic Settings (Bars, BPM, TS)
+    const basicRow = document.createElement('div');
+    basicRow.style.cssText = 'display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;';
+
+    const bpmInput = createSettingInput('BPM', rhythmTool.bpm, (v) => rhythmTool.bpm = parseInt(v));
+    const barsInput = createSettingInput('Bars', rhythmTool.bars, (v) => rhythmTool.bars = parseInt(v));
     const tsSelect = document.createElement('select');
     tsSelect.innerHTML = '<option value="4">4/4</option><option value="3">3/4</option>';
-    tsSelect.style.padding = '5px';
-    tsSelect.style.background = '#334155';
-    tsSelect.style.color = '#fff';
-    tsSelect.style.border = 'none';
-    tsSelect.style.borderRadius = '5px';
+    tsSelect.style.cssText = 'padding:5px; background:#334155; color:white; border:none; border-radius:5px;';
     tsSelect.onchange = (e) => rhythmTool.beatsPerBar = parseInt(e.target.value);
-    tsWrap.appendChild(tsSelect);
 
-    settingsPanel.append(bpmWrap, barsWrap, tsWrap);
+    basicRow.append(bpmInput, barsInput, tsSelect);
 
-    // --- Controls ---
-    const controlsRow = document.createElement('div');
-    controlsRow.style.display = 'flex';
-    controlsRow.style.gap = '15px';
+    // 2. Features Toggles
+    const featureTitle = document.createElement('div');
+    featureTitle.textContent = "Include Patterns:";
+    featureTitle.style.cssText = 'font-size:0.9rem; color:var(--primary-accent); font-weight:bold;';
 
-    // Generate Btn
+    const featuresGrid = document.createElement('div');
+    featuresGrid.style.cssText = 'display:grid; grid-template-columns: 1fr 1fr; gap:10px;';
+
+    const toggles = [
+        { key: 'long', label: 'Long Notes (Half/Whole)' },
+        { key: 'eighth', label: '8th Notes (八分)' },
+        { key: 'sixteenth', label: '16th Notes (十六分)' },
+        { key: 'dotted', label: 'Dotted (附点)' },
+        { key: 'syncopation', label: 'Syncopation (切分)' },
+        { key: 'triplets', label: 'Triplets (三连音) [Exclusive]' }
+    ];
+
+    toggles.forEach(t => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer;';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = rhythmTool.features[t.key];
+
+        cb.onchange = (e) => {
+            if (t.key === 'triplets' && e.target.checked) {
+                // Disable others
+                document.querySelectorAll('.rhythm-feature-cb').forEach(c => {
+                    if (c !== cb) c.checked = false;
+                });
+                // Reset internal state
+                Object.keys(rhythmTool.features).forEach(k => rhythmTool.features[k] = false);
+            } else if (t.key !== 'triplets' && e.target.checked) {
+                // Disable triplet
+                const tripCb = document.querySelector('.cb-triplets');
+                if (tripCb) {
+                    tripCb.checked = false;
+                    rhythmTool.features.triplets = false;
+                }
+            }
+            rhythmTool.features[t.key] = e.target.checked;
+        };
+        if (t.key === 'triplets') cb.classList.add('cb-triplets');
+        cb.classList.add('rhythm-feature-cb');
+
+        label.append(cb, document.createTextNode(t.label));
+        featuresGrid.appendChild(label);
+    });
+
+    configCard.append(basicRow, featureTitle, featuresGrid);
+
+    // --- Actions ---
+    const actionsRow = document.createElement('div');
+    actionsRow.style.cssText = 'display:flex; gap:15px; margin-top:10px;';
+
     const generateBtn = document.createElement('button');
-    generateBtn.textContent = '🎲 Generate';
+    generateBtn.textContent = '🎲 Generate New';
     generateBtn.className = 'option-btn';
 
-    // Play Btn
     const playBtn = document.createElement('button');
     playBtn.textContent = '▶ Play';
     playBtn.className = 'play-btn';
-    playBtn.style.fontSize = '1.2rem';
-    playBtn.style.padding = '12px 30px';
-    playBtn.style.marginTop = '0';
     playBtn.disabled = true;
 
-    // Metronome Toggle
-    const metroToggle = document.createElement('label');
-    metroToggle.style.display = 'flex';
-    metroToggle.style.alignItems = 'center';
-    metroToggle.style.gap = '10px';
-    metroToggle.style.cursor = 'pointer';
-    metroToggle.innerHTML = '<input type="checkbox" id="metro-check"> <span>Metronome</span>';
-    metroToggle.querySelector('input').onchange = (e) => rhythmTool.useMetronome = e.target.checked;
+    const metroLabel = document.createElement('label');
+    metroLabel.style.cssText = 'display:flex; align-items:center; gap:5px; cursor:pointer;';
+    metroLabel.innerHTML = '<input type="checkbox" checked> <span>Click Track</span>';
+    metroLabel.querySelector('input').onchange = (e) => rhythmTool.useMetronome = e.target.checked;
 
-    controlsRow.append(generateBtn, playBtn);
+    actionsRow.append(generateBtn, playBtn, metroLabel);
 
-    // --- Interaction Area ---
+    // --- Output & Answer ---
     const input = document.createElement('input');
     input.className = 'theory-input';
     input.placeholder = 'Generate first...';
-    input.style.letterSpacing = '3px';
+    input.style.letterSpacing = '2px';
 
-    const feedbackText = document.createElement('div');
-    feedbackText.style.height = '20px';
-    feedbackText.style.color = 'var(--text-secondary)';
+    const answerBox = document.createElement('div');
+    answerBox.style.cssText = 'display:none; margin-top:10px; padding:15px; background:rgba(255,255,255,0.05); border-radius:8px; width:100%; text-align:center; font-family:monospace; font-size:1.2rem; letter-spacing:3px; word-break:break-all;';
 
-    const showInfo = document.createElement('div');
-    showInfo.className = 'answer-box';
-    showInfo.style.display = 'none';
-    showInfo.style.marginTop = '10px';
-    showInfo.style.padding = '10px';
-    showInfo.style.background = 'rgba(16, 185, 129, 0.1)';
-    showInfo.style.color = '#10b981';
-    showInfo.style.borderRadius = '8px';
+    const feedback = document.createElement('div');
+    feedback.style.height = '20px';
 
-    // --- Logic Wiring ---
-    let currentAnswer = "";
+    const showAnsBtn = document.createElement('button');
+    showAnsBtn.textContent = 'Show Answer';
+    showAnsBtn.className = 'ts-btn';
+    showAnsBtn.onclick = () => {
+        answerBox.style.display = 'block';
+        answerBox.textContent = buildVisualAnswer(rhythmTool.pattern, rhythmTool.ticksPerBeat);
+    };
+
+    // Logic
+    let currentAnswerString = "";
 
     generateBtn.onclick = () => {
-        currentAnswer = rhythmTool.generatePattern();
-        playBtn.disabled = false;
-        input.value = '';
-        input.placeholder = 'Type rhythm (X 0 -)...';
-        input.focus();
-        showInfo.style.display = 'none';
-        feedbackText.textContent = "New rhythm generated!";
-        setTimeout(() => feedbackText.textContent = "", 2000);
+        const rawString = rhythmTool.generatePattern();
+        // Convert raw string (blocks) to normalized answer string
+        // The generator returns chunks separated by space: "X--- X-X-"
+        // We accept that exact string
+        currentAnswerString = rawString;
 
-        // Auto play? Maybe not, allow user to press play
+        playBtn.disabled = false;
+        playBtn.click(); // Auto play once
+
+        input.value = '';
+        input.placeholder = getPlaceholder(rhythmTool.ticksPerBeat);
+        answerBox.style.display = 'none';
+        feedback.textContent = "";
+
+        // Hint about resolution
+        let resName = "1/4 Beat (16th)";
+        if (rhythmTool.ticksPerBeat === 1) resName = "1 Beat (Quarter)";
+        if (rhythmTool.ticksPerBeat === 2) resName = "1/2 Beat (Eighth)";
+        if (rhythmTool.ticksPerBeat === 3) resName = "1/3 Beat (Triplet)";
+
+        feedback.textContent = `Resolution: ${resName}`;
+        feedback.style.color = 'var(--text-secondary)';
     };
 
     playBtn.onclick = () => {
@@ -305,40 +482,32 @@ function renderRhythmTool(container, question, chapterId) {
         rhythmTool.play(() => playBtn.classList.remove('active'));
     };
 
-    // Check Logic
-    const submitBtn = document.createElement('button');
-    submitBtn.textContent = 'Check';
-    submitBtn.className = 'option-btn';
-
-    const check = () => {
-        if (!currentAnswer) return;
+    const checkBtn = document.createElement('button');
+    checkBtn.textContent = 'Check';
+    checkBtn.className = 'option-btn';
+    checkBtn.onclick = () => {
+        // Normalize user input
         let val = input.value.trim().toUpperCase().replace(/\s+/g, ' ');
-        if (val === currentAnswer) {
-            feedbackText.textContent = "Correct!";
-            feedbackText.style.color = '#10b981';
-            input.style.borderColor = '#10b981';
+        if (val === currentAnswerString) {
+            feedback.textContent = "Correct!";
+            feedback.style.color = '#10b981';
         } else {
-            feedbackText.textContent = "Try again.";
-            feedbackText.style.color = '#ef4444';
-            input.style.borderColor = '#ef4444';
+            feedback.textContent = "Try again.";
+            feedback.style.color = '#ef4444';
         }
     };
 
-    submitBtn.onclick = check;
-    input.onkeypress = (e) => { if (e.key === 'Enter') check(); };
-
-    const showAnsBtn = document.createElement('button');
-    showAnsBtn.textContent = '👁 Show Answer';
-    showAnsBtn.className = 'ts-btn'; // Small style
-    showAnsBtn.onclick = () => {
-        if (!currentAnswer) return;
-        showInfo.textContent = currentAnswer;
-        showInfo.style.display = 'block';
-    };
-
-    // Assemble
-    wrapper.append(settingsPanel, metroToggle, controlsRow, input, submitBtn, feedbackText, showAnsBtn, showInfo);
+    wrapper.append(configCard, actionsRow, input, checkBtn, feedback, showAnsBtn, answerBox);
     container.appendChild(wrapper);
+}
+
+function buildVisualAnswer(patternArray, ticks) {
+    // Format pattern array into chunks
+    const chunks = [];
+    for (let i = 0; i < patternArray.length; i += ticks) {
+        chunks.push(patternArray.slice(i, i + ticks).join(''));
+    }
+    return chunks.join(' ');
 }
 
 function createSettingInput(label, def, onChange) {
@@ -586,6 +755,13 @@ function renderMetronomeTool(container, question, chapterId) {
 
         requestAnimationFrame(uiLoop);
     }
+}
+
+function getPlaceholder(ticks) {
+    if (ticks === 1) return "Format: X X (Quarter)";
+    if (ticks === 2) return "Format: XX XX (Eighths)";
+    if (ticks === 3) return "Format: XXX (Triplets)";
+    return "Format: X--- (16ths)";
 }
 
 function renderTextInput(container, question, chapterId) {
